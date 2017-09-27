@@ -5,21 +5,18 @@
 #include <semaphore.h>
 #include <time.h>
 
-#define CHAIRS 6                /* número de cadeiras para os clientes à espera */
+#define CHAIRS 3                /* número de cadeiras para os clientes à espera */
 
 
-sem_t customers;                /* número de cliente à espera de atendimento */
-sem_t barbers;                  /* número de barbeiros à espera de clientes */
-sem_t mutex1;                    /* para exclusão mútua */
-sem_t mutex2;                    /* para exclusão mútua */
-sem_t mutex3;                    /* para exclusão mútua */
+sem_t cust_d, cust_c, cust_s;   /* número de cliente à espera de atendimento */
+sem_t barb_d, barb_c, barb_s;   /* número de barbeiros à espera de clientes */
+sem_t mutex;                    /* para exclusão mútua */
 int waiting = 0;                /* clientes que estão esperando (não estão cortando) */
+int b_id_d = 1, b_id_c = 2, b_id_s = 3;
 
 /* protótipos */
-void* barber_d(void *arg);
-void* barber_c(void *arg);
-void* barber_s(void *arg);
-void* customer(int type);
+void* barber(int *type);
+void* customer(int *type);
 void dye_hair();
 void cut_hair();
 void shave_beard();
@@ -30,107 +27,97 @@ void get_beard_shaven();
 void customer_has_given_up();
 
 int main(){
-	sem_init(&customers, 0, 0);
-	sem_init(&barbers, 0, 0);
-	sem_init(&mutex1, 0, 1);
-	sem_init(&mutex2, 0, 1);
-	sem_init(&mutex3, 0, 1);
+	sem_init(&cust_d, 0, 0);
+	sem_init(&cust_c, 0, 0);
+	sem_init(&cust_s, 0, 0);
+	sem_init(&barb_d, 0, 0);
+	sem_init(&barb_c, 0, 0);
+	sem_init(&barb_s, 0, 0);
+	sem_init(&mutex, 0, 1);
 	srand(time(NULL));
 
 	pthread_t dye, cut, shave, cust;
 
+
 	/* criando barbeiros */
 	printf("Criando barbeiros.\n");
-
-	pthread_create(&dye, NULL, (void *) barber_d, NULL);
-	sleep(1);
+	pthread_create(&dye, NULL, (void *) barber, &b_id_d);
 	printf("Primeiro barbeiro criado.\n");
-	pthread_create(&cut, NULL, (void *) barber_c, NULL);
 	sleep(1);
+	pthread_create(&cut, NULL, (void *) barber, &b_id_c);
 	printf("Segundo barbeiro criado.\n");
-	pthread_create(&shave, NULL, (void *) barber_s, NULL);
 	sleep(1);
+	pthread_create(&shave, NULL, (void *) barber, &b_id_s);
 	printf("Terceiro barbeiro criado.\n");
+	sleep(1);
 
 	/* criação indefinida de clientes */
 	printf("\n\nCriando clientes:\n\n");
 	while(1){
-		int r = rand() % 3;      /* retorna um número entre 0 e 2*/
-		printf("r = %d.\n", r);
-		pthread_create(&cust, NULL, (void *) customer(r), NULL);
+		int r = (rand() % 3) + 1;   /* retorna um número entre 1 e 3*/
+		//printf("\nTipo de cliente = %d.\n", r);
+		pthread_create(&cust, NULL, (void *) customer, &r);
 		sleep(1);
 	}
 
 	return 0;
 }
 
-void* barber_d(void *arg){
-	printf("Barbeiro criado. Entrando no while...\n");
+void* barber(int *type){
 	while(1){
-		printf("No while do barbeiro.\n");
-		sem_wait(&customers);   			/* vai dormir se o número de clientes for 0 */
-		printf("Passou o espera clientes.\n");
-		sem_wait(&mutex1);       			/* obtém acesso a 'waiting' */
-		printf("Obteve acesso ao waiting.\n");
-		waiting = waiting - 1;  			/*descresce de um o contador de clientes à espera */
-		printf("Decresceu waiting em 1.\n");
-		sem_post(&barbers);     			/* um barbeiro está agora pronto para cortar cabelo */
-		printf("Um barbeiro agora está pronto para fazer algo.\n");
-		sem_post(&mutex1);       			/* libera 'waiting' */
-		printf("Liberou o waiting.\n");
-		dye_hair(); 				/* pinta o cabelo (fora da região crítica) */
-		printf("Fez um servico.\n");
+		/* se nao tiver cliente, o barbeiro em questao dorme */
+		if(*type == 1) sem_wait(&cust_d);
+		else if(*type == 2) sem_wait(&cust_c);
+		else if(*type == 3) sem_wait(&cust_s);
+
+		/* entra e sai da regiao crítica e decresce o waiting */
+		sem_wait(&mutex);
+		waiting--;
+		sem_post(&mutex);
+
+		/* efetua um servico e libera o barbeiro */
+		if(*type == 1){
+			dye_hair();
+			sem_post(&barb_d);
+		} else if(*type == 2){
+			cut_hair();
+			sem_post(&barb_c);
+		} else if(*type == 3){
+			shave_beard();
+			sem_post(&barb_s);
+		}
 	}
 
 	pthread_exit(NULL);
 }
 
-void* barber_c(void *arg) {
-	while(1) {
-		sem_wait(&customers);   /* vai dormir se o número de clientes for 0 */
-		sem_wait(&mutex2);       /* obtém acesso a 'waiting' */
-		waiting = waiting - 1;  /*descresce de um o contador de clientes à espera */
-		sem_post(&barbers);     /* um barbeiro está agora pronto para cortar cabelo */
-		sem_post(&mutex2);       /* libera 'waiting' */
-		cut_hair();             /* corta o cabelo (fora da região crítica) */
-	}
+void* customer(int *type){
+	sem_wait(&mutex);							/* entra na regiao crítica */
 
-	pthread_exit(NULL);
-}
-
-void* barber_s(void *arg) {
-	while(1) {
-		sem_wait(&customers);   /* vai dormir se o número de clientes for 0 */
-		sem_wait(&mutex3);       /* obtém acesso a 'waiting' */
-		waiting = waiting - 1;  /*descresce de um o contador de clientes à espera */
-		sem_post(&barbers);     /* um barbeiro está agora pronto para cortar cabelo */
-		sem_post(&mutex3);       /* libera 'waiting' */
-		shave_beard();             /* corta o cabelo (fora da região crítica) */
-	}
-
-	pthread_exit(NULL);
-}
-
-void* customer(int type){
-	printf("Customer type is %d.\n", type);
-	if(!type) sem_wait(&mutex1);           				/* entra na região crítica */
-	else if(type == 1) sem_wait(&mutex2);
-	else sem_wait(&mutex3);
-	if(waiting < CHAIRS){      					/* se não houver cadeiras vazias, saia */
+	if(waiting < CHAIRS){      		/* se não houver cadeiras vazias, saia */
 		customer_has_arrived();
-		waiting = waiting + 1;  					/* incrementa o contador de clientes à espera */
-		sem_post(&customers);   					/* acorda o barbeiro se necessário */
-		if(!type) sem_post(&mutex1);           				/* entra na região crítica */
-		else if(type == 1) sem_post(&mutex2);
-		else sem_post(&mutex3);      					/* libera o acesso a 'waiting' */
-		sem_wait(&barbers);     					/* vai dormir se o número de barbeiros livres for 0 */
-		if(!type) get_hair_colored();			/* sentado e sendo servido */
-		else if(type == 1) get_haircut();			/* sentado e sendo servido */
-		else get_beard_shaven();	/* sentado e sendo servido */
+		waiting++;  								/* incrementa o contador de clientes à espera */
+		
+		/* acorda o barbeiro se necessário */
+		if(*type == 1) sem_post(&cust_d);
+		else if(*type == 2) sem_post(&cust_c);
+		else if(*type == 3) sem_post(&cust_s);
+		sem_post(&mutex); 					/* sai da regiao crítica */
+
+		/* vai dormir se o número de barbeiros livres for 0 */
+		if(*type == 1){ 
+			sem_wait(&barb_d);
+			get_hair_colored();
+		} else if(*type == 2){
+			sem_wait(&barb_c);
+			get_haircut();
+		} else if(*type == 3){
+			sem_wait(&barb_s);
+			get_beard_shaven();
+  	}			
+
 	} else{
-		if(!type) sem_post(&mutex1);           				/* entra na região crítica */
-		else if(type == 1) sem_post(&mutex2);
-		else sem_post(&mutex3);      					/* a barbearia está cheia; não espera */
+		sem_post(&mutex); 					/* sai da regiao crítica */
 		customer_has_given_up();
 	}
 
